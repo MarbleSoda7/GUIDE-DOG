@@ -1,0 +1,52 @@
+# Keep the two maintained project trees under version control.
+*
+!RK/
+!RK/**
+!ZYNQ/
+!ZYNQ/**
+!README.md
+!.gitignore
+
+# Credentials and local machine configuration.
+**/.lubancat_codex_ed25519
+**/.lubancat_codex_ed25519.pub
+**/dsh-ssh.json
+**/.keys/
+
+# Vivado/Xilinx and host-generated state.
+**/.Xil/
+**/*.jou
+**/*.log
+**/*.str
+**/*.pb
+**/*.backup.jou
+**/*.backup.log
+**/.tmp/
+**/.vivado_tmp/
+**/.vivado-tmp/
+**/.xsdb_tmp/
+**/__pycache__/
+**/xsim.dir/
+**/.cache/
+**/*.gen/
+**/*.runs/
+**/*.cache/
+**/*.hw/
+**/*.sim/
+**/*.ip_user_files/
+ZYNQ/reference/build_cache_archive/
+
+# Large transient captures and generated debug dumps.
+ZYNQ/**/test_artifacts/*.pcap
+ZYNQ/**/test_artifacts/*.ila
+ZYNQ/**/test_artifacts/*.png
+ZYNQ/**/test_artifacts/*.dcp
+
+# Keep only the current mainline programming artifacts in Git. All historical
+# artifacts remain on disk for local recovery and comparison.
+ZYNQ/guide_dog_main/test_artifacts/*.bit
+ZYNQ/guide_dog_main/test_artifacts/*.elf
+!ZYNQ/guide_dog_main/test_artifacts/stage3b_sg_udp.bit
+!ZYNQ/guide_dog_main/test_artifacts/stage5_camera_cyclic_sg_udp.elf
+!ZYNQ/guide_dog_main/test_artifacts/stage5_camera_continuous_sg_udp.elf
+!ZYNQ/guide_dog_main/test_artifacts/stage5_camera_owned_sg_udp.elf

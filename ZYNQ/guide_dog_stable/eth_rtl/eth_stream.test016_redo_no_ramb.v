@@ -1,0 +1,64 @@
+`timescale 1ns/1ns
+// TEST-015: UDP state-machine only.
+// Keeps TEST-014 verified PHY/RGMII hardware chain, adds udp RX/TX state machines.
+// Excludes BRAM, AXI business registers, PS↔ETH CDC and all transmission start events.
+module eth_stream #(
+ parameter integer C_BRAM_AW=10, parameter [47:0] P_BOARD_MAC=48'h12_34_56_78_9a_bc,
+ parameter [31:0] P_BOARD_IP={8'd10,8'd212,8'd211,8'd3}, parameter [47:0] P_DES_MAC=48'hff_ff_ff_ff_ff_ff,
+ parameter [31:0] P_DES_IP={8'd10,8'd212,8'd211,8'd2}
+)(
+ input wire s_axi_aclk,input wire s_axi_aresetn,input wire [5:0] s_axi_awaddr,input wire s_axi_awvalid,output wire s_axi_awready,input wire [31:0] s_axi_wdata,input wire s_axi_wvalid,output wire s_axi_wready,output wire [1:0] s_axi_bresp,output wire s_axi_bvalid,input wire s_axi_bready,input wire [5:0] s_axi_araddr,input wire s_axi_arvalid,output wire s_axi_arready,output wire [31:0] s_axi_rdata,output wire [1:0] s_axi_rresp,output wire s_axi_rvalid,input wire s_axi_rready,
+ input wire rgmii_rxc,input wire rgmii_rx_ctl,input wire [3:0] rgmii_rxd,output wire rgmii_txc,output wire rgmii_tx_ctl,output wire [3:0] rgmii_txd,input wire sys_rst_n,output wire eth_rst_n
+);
+// Inert AXI-Lite response (no state, no AXI business function).
+assign s_axi_awready=1'b1; assign s_axi_wready=1'b1; assign s_axi_bvalid=s_axi_awvalid&s_axi_wvalid;assign s_axi_bresp=2'b00;
+assign s_axi_arready=1'b1; assign s_axi_rvalid=s_axi_arvalid;assign s_axi_rdata=32'd0;assign s_axi_rresp=2'b00;
+// Same verified 670ms PHY reset-release path as TEST-014.
+reg [26:0] phy_rst_count;
+always @(posedge s_axi_aclk or negedge s_axi_aresetn) begin
+ if(!s_axi_aresetn) phy_rst_count<=27'd0;
+ else if(phy_rst_count!={27{1'b1}}) phy_rst_count<=phy_rst_count+1'b1;
+end
+assign eth_rst_n=(phy_rst_count=={27{1'b1}});
+// Full RGMII RX/TX primitive chain.
+wire gmii_rx_clk,gmii_rx_dv,gmii_tx_clk,gmii_tx_en;
+wire [7:0] gmii_rxd,gmii_txd;
+gmii_to_rgmii u_rgmii(
+ .gmii_rx_clk(gmii_rx_clk),.gmii_rx_dv(gmii_rx_dv),.gmii_rxd(gmii_rxd),
+ .gmii_tx_clk(gmii_tx_clk),.gmii_tx_en(gmii_tx_en),.gmii_txd(gmii_txd),
+ .rgmii_rxc(rgmii_rxc),.rgmii_rx_ctl(rgmii_rx_ctl),.rgmii_rxd(rgmii_rxd),
+ .rgmii_txc(rgmii_txc),.rgmii_tx_ctl(rgmii_tx_ctl),.rgmii_txd(rgmii_txd));
+// TEST-016 sole addition: active true dual-port RAM across PS 100MHz / ETH RGMII clock.
+// This is intentionally not AXI controlled: it isolates BRAM dual-clock placement/clocking only.
+// Force an actual RAMB and active two-clock behavior. The read checksum is retained
+// and feeds the otherwise-unused AXI read data, so synthesis cannot remove the RAM.
+(* ram_style = "block", keep = "true", dont_touch = "true" *) reg [31:0] test_bram [0:1023];
+(* keep = "true", dont_touch = "true" *) reg [9:0] test_wr_addr;
+(* keep = "true", dont_touch = "true" *) reg [9:0] test_rd_addr;
+(* keep = "true", dont_touch = "true" *) reg [31:0] test_rd_data;
+(* keep = "true", dont_touch = "true" *) reg [31:0] test_rd_checksum;
+always @(posedge s_axi_aclk or negedge s_axi_aresetn) begin
+  if(!s_axi_aresetn) test_wr_addr <= 10'd0;
+  else begin
+    test_bram[test_wr_addr] <= {22'h2A55A, test_wr_addr};
+    test_wr_addr <= test_wr_addr + 1'b1;
+  end
+end
+always @(posedge gmii_rx_clk) begin
+  test_rd_data <= test_bram[test_rd_addr];
+  test_rd_addr <= test_rd_addr + 1'b1;
+  test_rd_checksum <= test_rd_checksum ^ test_rd_data;
+end
+
+// UDP runs and receives frames, but cannot transmit: tx_start_en permanently low.
+wire rec_pkt_done,rec_en,udp_tx_done,tx_req;
+wire [31:0] rec_data;
+wire [15:0] rec_byte_num;
+(* DONT_TOUCH="true" *) udp #(
+ .BOARD_MAC(P_BOARD_MAC),.BOARD_IP(P_BOARD_IP),.DES_MAC(P_DES_MAC),.DES_IP(P_DES_IP)
+) u_udp(
+ .rst_n(sys_rst_n),.gmii_rx_clk(gmii_rx_clk),.gmii_rx_dv(gmii_rx_dv),.gmii_rxd(gmii_rxd),
+ .gmii_tx_clk(gmii_tx_clk),.gmii_tx_en(gmii_tx_en),.gmii_txd(gmii_txd),
+ .rec_pkt_done(rec_pkt_done),.rec_en(rec_en),.rec_data(rec_data),.rec_byte_num(rec_byte_num),
+ .tx_start_en(1'b0),.tx_data(32'd0),.tx_byte_num(16'd0),.tx_done(udp_tx_done),.tx_req(tx_req));
+endmodule

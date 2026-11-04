@@ -1,0 +1,57 @@
+# yolov5n 检测模型 —— 推理侧参数
+#
+# 这不是训练配置：本仓库没有训练/导出流程，模型是外部用 rknn-toolkit2 转的 int8 RKNN。
+# 这里记录"换模型时必须一起对上"的东西，以及和 guide_rk.c / rk_detect.py 里常量
+# 一一对应的数值。运行时真正的来源仍是代码里的 #define，本文件只作对照。
+
+model:
+  file: yolov5n_int8.rknn
+  size_bytes: 3046136
+  sha256: f4900e080cd304f30e1f30ec1c7726f097628ff1b6809f0dd3d9931614fba254
+  arch: yolov5n
+  task: detect
+  classes: 80
+  class_names: labels.txt
+  quantized: int8
+  runtime: librknnrt.so            # 板上 2.3.2，7,726,232 B
+
+input:
+  shape: [1, 640, 640, 3]          # NHWC
+  dtype: uint8
+  color: RGB                       # 源帧是 BGR，letterbox 内换序
+  normalization: none              # 不除 255、不减均值
+  letterbox:
+    pad_value: 114
+    interpolation: bilinear
+    scale: 0.8                     # 800x480 -> 640x384
+    pad: [0, 128]                  # dw, dh：左右 0、上下各 64->128
+
+outputs:
+  count: 3
+  layout: auto                     # NCHW / NHWC 由 rknn attr 决定，代码两种都支持
+  channels: 85                     # 4 box + 1 obj + 80 cls
+  grids: [[80, 80], [40, 40], [20, 20]]
+  strides: [8, 16, 32]
+  activation: sigmoid_applied      # 输出已是 0..1
+
+anchors:                           # 与 anchors_yolov5.txt 完全一致
+  stride8:  [[10, 13], [16, 30], [33, 23]]
+  stride16: [[30, 61], [62, 45], [59, 119]]
+  stride32: [[116, 90], [156, 198], [373, 326]]
+
+decode:
+  box_xy: "(2*p - 0.5 + grid) * stride"
+  box_wh: "(2*p)^2 * anchor"
+  score: "obj * max(cls)"
+  scale_back: "(x - pad) / scale"
+
+thresholds:
+  obj: 0.25                        # OBJ_THRESH
+  nms_iou: 0.45                    # NMS_THRESH，按类做 NMS
+  max_boxes: 20                    # MAX_BOXES，也是回包的上限
+  min_box_px: 8                    # 还原到 800x480 后短边 <8 px 的框丢掉
+
+reply:
+  magic: "GRD1"
+  layout: "[4B magic][2B fid][1B n][1B rsv] + n * 16B (1B cls, 1B score*100, 4x2B box)"
+  score_precision: 0.01            # score*100 存 1 字节

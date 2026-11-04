@@ -1,0 +1,6 @@
+# Linux 目标：脚本/源码一律 LF，否则 shebang 在板上会变成 /bin/sh^M
+* text eol=lf
+# 二进制必须显式排除，否则会被当文本做换行归一化而损坏
+*.rknn binary
+*.png binary
+*.jpg binary
