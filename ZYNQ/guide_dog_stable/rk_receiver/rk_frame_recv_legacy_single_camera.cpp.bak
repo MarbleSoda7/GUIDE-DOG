@@ -1,0 +1,259 @@
+// frame_recv.cpp v5 - live viewer with per-frame diagnostics
+// Wire payload per packet: [4B hole][fid:2][total:2][idx:2][data].
+// The last packet is short: its payload is 556 bytes for an 800x480 RGB frame.
+#include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
+#include <opencv2/highgui.hpp>
+#include <sys/socket.h>
+#include <sys/ioctl.h>
+#include <netpacket/packet.h>
+#include <net/ethernet.h>
+#include <net/if.h>
+#include <netinet/in.h>
+#include <unistd.h>
+#include <cerrno>
+#include <cstdio>
+#include <cstring>
+#include <cstdlib>
+#include <algorithm>
+#include <vector>
+#include <ctime>
+#include <atomic>
+#include <mutex>
+#include <thread>
+
+static const int W = 800, H = 480;
+static const int FRAME_BYTES = W * H * 3;
+static const int DATA_PER_PKT = 1394;
+static const int TOTAL_PKTS = 827;
+static const int SKIP = 4;
+
+static const uint8_t GIMME[60] = {
+    0x12,0x34,0x56,0x78,0x9a,0xbc,
+    0xa2,0xd8,0xbf,0xa8,0x6d,0xb5,
+    0x08,0x00,
+    0x45,0x00,0x00,0x1d,0x00,0x1c,0x40,0x00,
+    0x40,0x11,0x7f,0x06,
+    0x0a,0xd4,0xd3,0x02,
+    0x0a,0xd4,0xd3,0x03,
+    0x9c,0x40,0x04,0xd2,0x00,0x09,0x00,0x00,
+    0x47,
+    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+};
+
+static double now_s() {
+    timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec + ts.tv_nsec / 1e9;
+}
+
+static void configure_receive_buffer(int fd) {
+    // The stream is about 1.16 MB per frame at ~50 fps.  Request a large
+    // per-socket queue and, when running as root (required for AF_PACKET
+    // GIMME), force it past a small system rmem_max without changing the
+    // RK-wide sysctl configuration.
+    const int requested = 16 * 1024 * 1024;
+    bool configured = false;
+#ifdef SO_RCVBUFFORCE
+    if (setsockopt(fd, SOL_SOCKET, SO_RCVBUFFORCE,
+                   &requested, sizeof(requested)) == 0) {
+        configured = true;
+    } else {
+        fprintf(stderr, "SO_RCVBUFFORCE failed: %s; trying SO_RCVBUF\n",
+                strerror(errno));
+    }
+#endif
+    if (!configured && setsockopt(fd, SOL_SOCKET, SO_RCVBUF,
+                                  &requested, sizeof(requested)) < 0) {
+        perror("SO_RCVBUF");
+    }
+
+    int actual = 0;
+    socklen_t actual_len = sizeof(actual);
+    if (getsockopt(fd, SOL_SOCKET, SO_RCVBUF, &actual, &actual_len) == 0) {
+        printf("udp receive buffer requested=%d actual=%d%s\n",
+               requested, actual, configured ? " (forced)" : "");
+    } else {
+        perror("getsockopt SO_RCVBUF");
+    }
+}
+
+static bool link_up() {
+    FILE* f = fopen("/sys/class/net/eth0/carrier", "r");
+    if (!f) return false;
+    char c = 0;
+    size_t n = fread(&c, 1, 1, f);
+    fclose(f);
+    return n == 1 && c == '1';
+}
+
+int main() {
+    // GIMME is an L2 control frame; the image itself is ordinary IPv4 UDP.
+    int gimme_fd = socket(AF_PACKET, SOCK_RAW, htons(0x0003));
+    if (gimme_fd < 0) { perror("gimme socket"); return 1; }
+
+    ifreq ifr{};
+    strncpy(ifr.ifr_name, "eth0", IFNAMSIZ - 1);
+    if (ioctl(gimme_fd, SIOCGIFINDEX, &ifr) < 0) { perror("ioctl"); return 1; }
+    sockaddr_ll sa{};
+    sa.sll_family = AF_PACKET;
+    sa.sll_protocol = htons(0x0003);
+    sa.sll_ifindex = ifr.ifr_ifindex;
+    if (bind(gimme_fd, (sockaddr*)&sa, sizeof(sa)) < 0) { perror("gimme bind"); return 1; }
+
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) { perror("udp socket"); return 1; }
+    sockaddr_in udp_sa{};
+    udp_sa.sin_family = AF_INET;
+    udp_sa.sin_addr.s_addr = htonl(INADDR_ANY);
+    udp_sa.sin_port = htons(1234);
+    if (bind(fd, (sockaddr*)&udp_sa, sizeof(udp_sa)) < 0) { perror("udp bind 1234"); return 1; }
+    configure_receive_buffer(fd);
+    timeval tv{0, 200000};
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    printf("waiting for link...\n");
+    for (int i = 0; i < 20 && !link_up(); i++) sleep(1);
+    printf("link %s\n", link_up() ? "up" : "DOWN");
+    sleep(2);
+
+    int drained = 0;
+    while (true) {
+        uint8_t tmp[65535];
+        ssize_t n = recv(fd, tmp, sizeof(tmp), MSG_DONTWAIT);
+        if (n <= 0) break;
+        drained++;
+    }
+    printf("udp receiver bound to 0.0.0.0:1234; drained %d stale datagrams\n", drained);
+    printf("viewer: %dx%d, %d pkts/frame, skip=%d\n", W, H, TOTAL_PKTS, SKIP);
+    fflush(stdout);
+
+    // Keep packet reception independent from GUI refresh.  The receiver
+    // publishes only the newest complete frame; the display is allowed to
+    // drop older frames instead of making the UDP queue grow indefinitely.
+    std::vector<uint8_t> work_frame(FRAME_BYTES);
+    std::vector<uint8_t> latest_frame(FRAME_BYTES);
+    std::vector<uint8_t> got(TOTAL_PKTS);
+    std::mutex latest_mutex;
+    std::atomic<uint64_t> published_frames{0};
+    std::atomic<bool> stop{false};
+    cv::Mat bgr(H, W, CV_8UC3);
+
+    std::thread receiver([&]() {
+        int fid_lock = -1;
+        int gotCnt = 0;
+        unsigned udp = 0, accepted = 0, drops = 0;
+        double report_t0 = now_s();
+        uint64_t report_frames = 0;
+        double last_gimme = report_t0 - 0.5;
+        uint8_t buf[2048];
+
+        std::fill(got.begin(), got.end(), 0);
+        while (!stop.load()) {
+            double now = now_s();
+            if (now - last_gimme >= 0.5) {
+                if (send(gimme_fd, GIMME, 60, 0) < 0 && errno != EINTR)
+                    perror("send gimme");
+                last_gimme = now;
+            }
+
+            ssize_t n = recv(fd, buf, sizeof(buf), 0);
+            if (n <= 0) continue;
+            udp++;
+            int plen = (int)n;
+            if (plen < SKIP + 6) { drops++; continue; }
+            const uint8_t* payload = buf;
+            int fid = (payload[SKIP] << 8) | payload[SKIP + 1];
+            int tot = (payload[SKIP + 2] << 8) | payload[SKIP + 3];
+            int idx = (payload[SKIP + 4] << 8) | payload[SKIP + 5];
+            if (tot != TOTAL_PKTS || idx >= TOTAL_PKTS) { drops++; continue; }
+
+            const int expected = std::min(DATA_PER_PKT,
+                                          FRAME_BYTES - idx * DATA_PER_PKT);
+            const int c = plen - SKIP - 6;
+            if (c != expected) { drops++; continue; }
+
+            /* Packet zero marks a new frame even if an older sender reuses
+               the same frame ID; discard its incomplete predecessor. */
+            if (idx == 0 && fid == fid_lock && got[0]) {
+                std::fill(got.begin(), got.end(), 0);
+                std::fill(work_frame.begin(), work_frame.end(), 0);
+                gotCnt = 0;
+            }
+            if (fid != fid_lock) {
+                fid_lock = fid;
+                std::fill(got.begin(), got.end(), 0);
+                std::fill(work_frame.begin(), work_frame.end(), 0);
+                gotCnt = 0;
+            }
+            if (got[idx]) { drops++; continue; }
+
+            const uint8_t* data = payload + SKIP + 6;
+            int off = idx * DATA_PER_PKT;
+            if (c > 0) {
+                memcpy(&work_frame[off], data, c);
+                got[idx] = 1;
+                gotCnt++;
+                accepted++;
+            }
+
+            if (gotCnt == TOTAL_PKTS) {
+                {
+                    std::lock_guard<std::mutex> lock(latest_mutex);
+                    latest_frame.swap(work_frame);
+                }
+                published_frames.fetch_add(1);
+                report_frames++;
+                std::fill(got.begin(), got.end(), 0);
+                gotCnt = 0;
+            }
+
+            if (now - report_t0 >= 1.0) {
+                double elapsed = now - report_t0;
+                printf("[rx] complete=%llu rx_fps=%.1f udp=%u accepted=%u dropped=%u\n",
+                       (unsigned long long)report_frames,
+                       report_frames / elapsed, udp, accepted, drops);
+                fflush(stdout);
+                report_t0 = now;
+                report_frames = 0;
+                udp = accepted = drops = 0;
+            }
+        }
+    });
+
+    cv::namedWindow("ZYNQ CAM", cv::WINDOW_AUTOSIZE);
+    uint64_t shown_seq = 0;
+    uint32_t shown_frames = 0;
+    double display_t0 = now_s();
+    while (!stop.load()) {
+        uint64_t seq = published_frames.load();
+        if (seq != shown_seq) {
+            {
+                std::lock_guard<std::mutex> lock(latest_mutex);
+                memcpy(bgr.data, latest_frame.data(), (size_t)FRAME_BYTES);
+            }
+            shown_seq = seq;
+            shown_frames++;
+            char msg[128];
+            double elapsed = now_s() - display_t0;
+            double display_fps = elapsed > 0.0 ? shown_frames / elapsed : 0.0;
+            snprintf(msg, sizeof(msg), "display %.1f fps / rx %llu [q quit]",
+                     display_fps, (unsigned long long)seq);
+            cv::putText(bgr, msg, cv::Point(10, 24),
+                        cv::FONT_HERSHEY_SIMPLEX, 0.6,
+                        cv::Scalar(0, 255, 255), 2);
+            cv::imshow("ZYNQ CAM", bgr);
+            if (shown_frames == 1)
+                cv::imwrite("/home/cat/eth_recv/frame_0.png", bgr);
+        }
+        if (cv::waitKey(1) == 'q') break;
+    }
+
+    stop.store(true);
+    shutdown(fd, SHUT_RDWR);
+    receiver.join();
+    cv::destroyAllWindows();
+    close(fd);
+    close(gimme_fd);
+    return 0;
+}

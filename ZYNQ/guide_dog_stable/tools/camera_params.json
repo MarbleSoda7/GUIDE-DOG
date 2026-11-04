@@ -1,0 +1,29 @@
+{
+  "schema": "dual-fisheye-rectify-v1",
+  "width": 800,
+  "height": 480,
+  "grid_step": 16,
+  "frac_bits": 6,
+  "baseline_mm": 40.0,
+  "calibration_valid": false,
+  "calibration_source": "synthetic_only",
+  "notes": "Synthetic data-path smoke-test parameters only; replace K/D/R/rectified_K with measured stereo calibration. Generator requires --allow-synthetic for this file.",
+  "left": {
+    "hfov_deg": 170.0,
+    "rectified_hfov_deg": 100.0,
+    "projection": "equidistant_fisheye",
+    "K": [[269.627197709, 0.0, 399.5], [0.0, 269.627197709, 239.5], [0.0, 0.0, 1.0]],
+    "D": [0.0, 0.0, 0.0, 0.0],
+    "R": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+    "rectified_K": [[335.639852471, 0.0, 399.5], [0.0, 335.639852471, 239.5], [0.0, 0.0, 1.0]]
+  },
+  "right": {
+    "hfov_deg": 170.0,
+    "rectified_hfov_deg": 100.0,
+    "projection": "equidistant_fisheye",
+    "K": [[269.627197709, 0.0, 399.5], [0.0, 269.627197709, 239.5], [0.0, 0.0, 1.0]],
+    "D": [0.0, 0.0, 0.0, 0.0],
+    "R": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+    "rectified_K": [[335.639852471, 0.0, 399.5], [0.0, 335.639852471, 239.5], [0.0, 0.0, 1.0]]
+  }
+}

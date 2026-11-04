@@ -1,0 +1,41 @@
+/include/ "system-conf.dtsi"
+/ {
+    reserved-memory {
+        #address-cells = <1>;
+        #size-cells = <1>;
+        ranges;
+        /* 16 MiB for both camera rings, Ethernet snapshot/output (dualcam/main.py RES_BASE) */
+        dualcam_buf: dualcam@30000000 {
+            reg = <0x30000000 0x01000000>;
+            no-map;
+        };
+    };
+};
+
+/* keep PL clocks running after boot even if no driver claims them */
+&clkc {
+    fclk-enable = <0x1>;
+};
+
+/* The XSA contains the PL IRQ concat, but XSCT 2024.1 omits its IRQ
+ * metadata from pl.dtsi.  Explicitly describe the two Zynq F2P SPI lines.
+ * concat In0 = VDMA S2MM, In1 = AXI DMA MM2S. */
+&axi_vdma_0 {
+    interrupt-parent = <&intc>;
+    interrupts = <0 61 4>;
+    interrupt-names = "s2mm_introut";
+    dma-channel@44a00030 {
+        interrupt-parent = <&intc>;
+        interrupts = <0 61 4>;
+    };
+};
+
+&axi_dma_udp_0 {
+    interrupt-parent = <&intc>;
+    interrupts = <0 62 4>;
+    interrupt-names = "mm2s_introut";
+    dma-channel@41e00000 {
+        interrupt-parent = <&intc>;
+        interrupts = <0 62 4>;
+    };
+};

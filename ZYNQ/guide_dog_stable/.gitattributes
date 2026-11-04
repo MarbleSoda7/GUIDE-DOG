@@ -1,0 +1,14 @@
+# 脚本/源码保持 LF，避免在 Linux 板上 shebang 变成 /bin/sh^M
+* text eol=lf
+# 二进制必须显式排除，否则被当文本做换行归一化而损坏
+*.bit binary
+*.BIN binary
+*.ub binary
+*.xsa binary
+*.hwh binary
+*.png binary
+*.a binary
+*.zip binary
+*.elf binary
+*.dtb binary
+*.bin binary

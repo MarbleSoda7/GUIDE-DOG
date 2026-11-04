@@ -1,0 +1,27 @@
+{
+  "written_at": "2026-11-04 06:51:25",
+  "source_project": "D:/latest_project_pl_rectify",
+  "note": "camremap application code lives inside image.ub initramfs; the card camremap/ dir only supplies args and optional overrides",
+  "files": {
+    "BOOT.BIN": {
+      "size": 5216720,
+      "sha256": "b4408a9212234bd42a6da7bcd488c7fb5516075ff3618c60e0835672ca601588"
+    },
+    "image.ub": {
+      "size": 41990516,
+      "sha256": "a477b366f829629153780e01c8145fde695de34f4b773ed3e26c4963ceb2ad17"
+    },
+    "boot.scr": {
+      "size": 3473,
+      "sha256": "3b9b939dfab95e26e69855ab23fc84e6e2ab9431ab71998aece3db7f2a8c37cd"
+    }
+  },
+  "camremap_dir": [
+    "README.txt",
+    "args",
+    "left_remap.rmp",
+    "remap_manifest.json",
+    "right_remap.rmp"
+  ],
+  "args": "--fps 5 --frames 0"
+}

@@ -1,0 +1,7 @@
+the_ROM_image:
+{
+  [bootloader] ./zynq_fsbl.elf
+  ../guide_linux_base.runs/impl_1/led_test_wrapper.bit
+  ./u-boot.elf
+  [load=0x100000] ./system.dtb
+}

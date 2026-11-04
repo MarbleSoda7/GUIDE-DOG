@@ -1,0 +1,82 @@
+#!/bin/sh
+# Dual-camera capture autostart (sysvinit). Log: /var/log/camremap.log
+# SD card folder camremap/ may contain:
+#   args     extra arguments, e.g. "--fps 10"
+#   disable  empty file, stops autostart
+PID=/var/run/camremap.pid
+LOG=/var/log/camremap.log
+FATAL=/run/camremap-fatal
+
+find_sd() {
+    for d in /run/media/mmcblk0p1/camremap /media/sd-mmcblk0p1/camremap /mnt/sd/camremap; do
+        [ -d "$d" ] && { echo "$d"; return; }
+    done
+}
+
+case "$1" in
+  start)
+    if [ -e "$FATAL" ]; then
+        echo "camremap: fatal latch $FATAL exists; PL reconfiguration required" >&2
+        exit 1
+    fi
+    sleep 3
+    SD=$(find_sd)
+    if [ -n "$SD" ] && [ -e "$SD/disable" ]; then
+        echo "camremap: disabled by $SD/disable"; exit 0
+    fi
+    ARGS=""
+    [ -n "$SD" ] && [ -f "$SD/args" ] && ARGS=$(cat "$SD/args")
+    echo "Starting camremap $ARGS"
+    (
+      CHILD=
+      trap '[ -n "$CHILD" ] && kill "$CHILD" 2>/dev/null; exit 143' TERM INT HUP
+      while true; do
+        echo "=== camremap start $(date) args: $ARGS" >> "$LOG"
+        python3 -u -m camremap $ARGS >> "$LOG" 2>&1 &
+        CHILD=$!
+        wait "$CHILD"
+        RC=$?
+        CHILD=
+        echo "=== camremap exited rc=$RC" >> "$LOG"
+        case "$RC" in
+          2|3)
+            echo "=== camremap fatal rc=$RC; PL reconfiguration required; supervisor stopped" >> "$LOG"
+            : > "$FATAL"
+            exit "$RC"
+            ;;
+          0)
+            echo "=== camremap completed normally; supervisor stopped" >> "$LOG"
+            exit 0
+            ;;
+          *)
+            echo "=== camremap transient failure; restart in 5 s" >> "$LOG"
+            sleep 5
+            ;;
+        esac
+      done
+    ) </dev/null >/dev/null 2>&1 &
+    echo $! > $PID
+    ;;
+  stop)
+    echo "Stopping camremap"
+    [ -f $PID ] && kill $(cat $PID) 2>/dev/null
+    # The supervisor trap terminates its own child; never broad-pkill unrelated jobs.
+    rm -f "$PID"
+    ;;
+  restart)
+    $0 stop; sleep 1; $0 start
+    ;;
+  clear-fatal)
+    rm -f "$FATAL"
+    echo "camremap: fatal latch cleared explicitly; verify PL was reconfigured"
+    ;;
+  status)
+    [ -e "$FATAL" ] && echo "FATAL LATCH: PL reconfiguration required before restart"
+    if [ -f $PID ] && kill -0 $(cat $PID) 2>/dev/null; then echo "running (pid $(cat $PID))"; else echo "stopped"; fi
+    tail -n 5 $LOG 2>/dev/null
+    ;;
+  *)
+    echo "Usage: $0 {start|stop|restart|clear-fatal|status}"; exit 1
+    ;;
+esac
+exit 0

@@ -1,0 +1,14 @@
+{
+  "BOOT.BIN": {
+    "bytes": 5216720,
+    "sha256": "17d1a27610e6cbde991906d973763e705feecff1550943d9d0c6d9eec08ab7a6"
+  },
+  "image.ub": {
+    "bytes": 42499176,
+    "sha256": "59d084a2e841d1e96cb43396040173575c2a0574878c5390dadfe848f941911e"
+  },
+  "boot.scr": {
+    "bytes": 3473,
+    "sha256": "3b9b939dfab95e26e69855ab23fc84e6e2ab9431ab71998aece3db7f2a8c37cd"
+  }
+}

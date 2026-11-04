@@ -1,0 +1,22 @@
+<AutoPilot:solution xmlns:AutoPilot="com.autoesl.autopilot.solution">
+    <clockList>
+        <clock name="ap_clk" period="10.0" default="false"/>
+    </clockList>
+    <config>
+        <config_export format="ip_catalog" library="hls" vendor="xilinx.com" version="1.0"/>
+    </config>
+    <name>
+        <value string="solution1"/>
+    </name>
+    <project>
+        <value string="pl_remap_accel_hls"/>
+    </project>
+    <targetInfo>
+        <TargetInfo value="xc7z020:-clg400:-2"/>
+    </targetInfo>
+    <libraryList>
+        <library value="xilinx/zynq/zynq" name="DefaultPlatform"/>
+    </libraryList>
+    <flowTarget value="vivado"/>
+</AutoPilot:solution>
+
